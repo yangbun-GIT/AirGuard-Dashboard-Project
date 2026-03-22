@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from pydantic import BaseModel
 
-from .database import get_db, init_db, RegionCode, WeatherDataCache
+from .database import get_db, init_db, AsyncSessionLocal, RegionCode, WeatherDataCache
 from .api_client import fetch_nearby_station, fetch_air_quality, fetch_weather, fetch_uv_index
 from .service import calculate_scores
 
@@ -15,30 +15,41 @@ app = FastAPI(title="AirGuard Dashboard API")
 @app.on_event("startup")
 async def on_startup():
     await init_db()
-    async for db in get_db():
+
+    async with AsyncSessionLocal() as db:
         result = await db.execute(select(RegionCode).limit(1))
-        # DB가 비어있다면 CSV에서 전국 데이터(시/군/구) 추출 및 저장
         if not result.scalars().first():
+            print("\n[DB 초기화] 등록된 지역 데이터가 없습니다. 엑셀(Excel) 로딩을 시작합니다...")
             import pandas as pd
             import os
 
-            csv_path = "region_data.csv"
-            if os.path.exists(csv_path):
-                try:
-                    df = pd.read_csv(csv_path, encoding="cp949")
-                except UnicodeDecodeError:
-                    df = pd.read_csv(csv_path, encoding="utf-8")
+            # 🚨 경로 및 확장자 수정 (.xlsx)
+            excel_path = "backend/region_data.xlsx"
+
+            if not os.path.exists(excel_path):
+                print(f"[오류] ❌ 엑셀 파일을 찾을 수 없습니다: {excel_path}")
+                print("⚠️ region_data.xlsx 파일이 backend 폴더 안에 있는지 꼭 확인해주세요!")
+                return
+
+            try:
+                print(f"[진행] ✅ 엑셀 파일 발견! 데이터를 읽어옵니다. (시간이 조금 걸릴 수 있습니다...)")
+                # 🚨 CSV가 아닌 Excel 파싱 (openpyxl 엔진 사용)
+                df = pd.read_excel(excel_path, engine='openpyxl')
 
                 df = df.fillna("")
-                # 3단계(동)가 비어있고 1단계(시도)가 존재하는 '시/군/구' 단위 데이터 추출
-                target_df = df[(df["3단계"] == "") & (df["1단계"] != "")]
+
+                df['1단계'] = df['1단계'].astype(str)
+                df['3단계'] = df['3단계'].astype(str)
+
+                target_df = df[(df["1단계"] != "") & (df["3단계"] == "")]
+                print(f"[진행] ✅ 필터링 완료! 총 {len(target_df)}개의 시/도 및 시/군/구 데이터가 발견되었습니다.")
 
                 regions = []
                 for _, row in target_df.iterrows():
-                    code = str(row["행정구역코드"])
-                    sido = row["1단계"]
-                    sigungu = row["2단계"]
-                    if not sigungu: sigungu = sido  # 세종시 등 단일 구조 대응
+                    code = str(row["행정구역코드"]).strip()
+                    sido = str(row["1단계"]).strip()
+                    sigungu = str(row["2단계"]).strip()
+                    if not sigungu: sigungu = sido
 
                     try:
                         regions.append(RegionCode(
@@ -46,12 +57,18 @@ async def on_startup():
                             lat=float(row["위도(초/100)"]), lon=float(row["경도(초/100)"]),
                             nx=int(row["격자 X"]), ny=int(row["격자 Y"])
                         ))
-                    except ValueError:
+                    except Exception as e:
                         continue
 
                 if regions:
                     db.add_all(regions)
                     await db.commit()
+                    print(f"[완료] 🎉 총 {len(regions)}개의 지역 데이터가 DB(backend/data/airguard.db)에 성공적으로 저장되었습니다!\n")
+                else:
+                    print("[오류] ❌ 추출된 지역 데이터가 0건입니다. 엑셀 파일 형식을 확인하세요.")
+
+            except Exception as e:
+                print(f"[오류] ❌ 알 수 없는 에러 발생: {str(e)}")
 
 
 class DashboardResponse(BaseModel):
@@ -97,7 +114,7 @@ async def get_dashboard(region_code: str, db: AsyncSession = Depends(get_db)):
     try:
         station_name = await fetch_nearby_station(region.lat, region.lon)
         air_task = fetch_air_quality(station_name)
-        weather_task = fetch_weather(region.nx, region.ny)  # 👈 위경도 대신 nx, ny 전달
+        weather_task = fetch_weather(region.nx, region.ny)
         uv_task = fetch_uv_index(region_code)
 
         air_data, weather_data, uv_data = await asyncio.gather(air_task, weather_task, uv_task)
