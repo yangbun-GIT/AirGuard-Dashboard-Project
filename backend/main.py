@@ -1,3 +1,5 @@
+# backend/main.py
+
 import asyncio
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException
@@ -7,6 +9,7 @@ from pydantic import BaseModel
 
 from .database import get_db, init_db, RegionCode, WeatherDataCache
 from .api_client import fetch_nearby_station, fetch_air_quality, fetch_weather, fetch_uv_index
+from .service import calculate_scores  # ✨ 분리한 서비스 모듈 임포트
 
 app = FastAPI(title="AirGuard Dashboard API")
 
@@ -14,7 +17,6 @@ app = FastAPI(title="AirGuard Dashboard API")
 @app.on_event("startup")
 async def on_startup():
     await init_db()
-    # 개발/테스트용 초기 더미 지역 데이터 적재
     async for db in get_db():
         result = await db.execute(select(RegionCode).limit(1))
         if not result.scalars().first():
@@ -37,31 +39,6 @@ class DashboardResponse(BaseModel):
     lon: float
 
 
-def calculate_scores(pm10, pm25, temp, rain, uv):
-    # 환기 지수 계산 (미세먼지, 강수 확률 기반)
-    vent_score = 100
-    if rain > 50: vent_score -= 50
-    if pm10 > 80 or pm25 > 35:
-        vent_score -= 40
-    elif pm10 > 30 or pm25 > 15:
-        vent_score -= 15
-
-    # 야외 운동 지수 계산 (기온, 자외선, 미세먼지 기반)
-    out_score = 100
-    if temp < 5 or temp > 33:
-        out_score -= 40
-    elif temp < 15 or temp > 28:
-        out_score -= 15
-    if uv > 7:
-        out_score -= 30
-    elif uv > 5:
-        out_score -= 15
-    if pm10 > 80 or pm25 > 35: out_score -= 40
-    if rain > 40: out_score -= 50
-
-    return max(0, vent_score), max(0, out_score)
-
-
 @app.get("/api/regions")
 async def get_regions(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(RegionCode))
@@ -71,12 +48,11 @@ async def get_regions(db: AsyncSession = Depends(get_db)):
 
 @app.get("/api/dashboard/{region_code}", response_model=DashboardResponse)
 async def get_dashboard(region_code: str, db: AsyncSession = Depends(get_db)):
-    # 1. 지역 확인
     result = await db.execute(select(RegionCode).where(RegionCode.code == region_code))
     region = result.scalars().first()
-    if not region: raise HTTPException(status_code=404, detail="지역을 찾을 수 없습니다.")
+    if not region:
+        raise HTTPException(status_code=404, detail="지역을 찾을 수 없습니다.")
 
-    # 2. 캐시 확인 (1시간 이내)
     time_threshold = datetime.utcnow() - timedelta(hours=1)
     cache_result = await db.execute(
         select(WeatherDataCache).where(
@@ -92,7 +68,6 @@ async def get_dashboard(region_code: str, db: AsyncSession = Depends(get_db)):
                                  pm10=cache.pm10, pm25=cache.pm25, uv_index=cache.uv_index, ventilation_score=vent,
                                  outdoor_score=out, lat=region.lat, lon=region.lon)
 
-    # 3. 비동기 API 호출
     try:
         station_name = await fetch_nearby_station(region.lat, region.lon)
         air_task = fetch_air_quality(station_name)
@@ -101,7 +76,6 @@ async def get_dashboard(region_code: str, db: AsyncSession = Depends(get_db)):
 
         air_data, weather_data, uv_data = await asyncio.gather(air_task, weather_task, uv_task)
 
-        # 캐시 저장
         new_cache = WeatherDataCache(
             region_code=region_code, pm10=air_data["pm10"], pm25=air_data["pm25"],
             temperature=weather_data["temperature"], rain_prob=weather_data["rain_prob"], uv_index=uv_data
@@ -117,7 +91,6 @@ async def get_dashboard(region_code: str, db: AsyncSession = Depends(get_db)):
                                  lon=region.lon)
 
     except Exception as e:
-        # 4. Fallback: API 에러시 가장 최근 캐시 반환
         fallback_result = await db.execute(
             select(WeatherDataCache).where(WeatherDataCache.region_code == region_code).order_by(
                 WeatherDataCache.timestamp.desc()))
