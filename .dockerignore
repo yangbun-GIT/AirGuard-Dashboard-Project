@@ -1,0 +1,29 @@
+# Git 및 IDE 설정 파일
+.git
+.gitignore
+.idea/
+.vscode/
+
+# 가상환경 및 패키지 캐시
+.venv/
+env/
+venv/
+.uv.cache/
+
+# 파이썬 캐시 파일
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 환경변수 및 보안 파일
+.env
+
+# 로컬 데이터베이스 (컨테이너는 빈 상태로 시작하거나 볼륨을 마운트해야 함)
+*.db
+*.sqlite3
+data/
+
+# OS 생성 파일
+.DS_Store
+Thumbs.db
