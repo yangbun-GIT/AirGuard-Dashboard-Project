@@ -1,0 +1,18 @@
+[project]
+name = "airguard-dashboard-project"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.135.1",
+    "folium>=0.20.0",
+    "httpx>=0.28.1",
+    "pandas>=2.3.3",
+    "pyproj>=3.7.2",
+    "python-dotenv>=1.2.2",
+    "sqlalchemy>=2.0.48",
+    "streamlit>=1.55.0",
+    "streamlit-folium>=0.26.2",
+    "uvicorn>=0.42.0",
+]
