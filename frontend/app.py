@@ -13,7 +13,7 @@ apply_glassmorphism()
 st.title("🍃 스마트 환기 및 야외 운동 알리미")
 
 with st.expander("🗺️ 전국 주요 지역 기상/대기 요약 보기", expanded=False):
-    st.markdown("**전반적인 전국 상태를 간략하게 파악합니다.** (🟢좋음 🟡보통 🔴나쁨)")
+    st.markdown("**전반적인 전국 17개 시/도 상태를 간략하게 파악합니다.** (🟢좋음 🟡보통 🔴나쁨)")
     render_national_overview_map()
 
 st.markdown("---")
@@ -28,13 +28,33 @@ try:
         if regions_data:
             df = pd.DataFrame(regions_data)
 
-            # 단계 1: 시/도
-            sido_list = df['sido'].unique().tolist()
-            selected_sido = st.sidebar.selectbox("1. 시/도를 선택하세요", sido_list)
+            # 🚨 단계 1: 시/도 필터링 및 커스텀 정렬 적용
+            raw_sido_list = df['sido'].unique().tolist()
+
+            # 이어도 같은 이상치 제거
+            filtered_sido_list = [s for s in raw_sido_list if "이어도" not in s]
+
+
+            # 정렬 규칙: 1순위(특별시), 2순위(도 단위), 3순위(광역시/기타 시)
+            def sido_sort_key(sido_name):
+                if sido_name == "서울특별시":
+                    return (1, sido_name)
+                elif sido_name.endswith("도"):  # 경기도, 강원특별자치도 등
+                    return (2, sido_name)
+                elif sido_name.endswith("시"):  # 광역시, 세종특별자치시 등
+                    return (3, sido_name)
+                else:
+                    return (4, sido_name)
+
+
+            sorted_sido_list = sorted(filtered_sido_list, key=sido_sort_key)
+
+            selected_sido = st.sidebar.selectbox("1. 시/도를 선택하세요", sorted_sido_list)
 
             # 단계 2: 시/군/구 (선택한 시/도 기준 필터링)
             sigungu_df = df[df['sido'] == selected_sido]
-            sigungu_list = sigungu_df['sigungu'].unique().tolist()
+            # 시군구 가나다 정렬
+            sigungu_list = sorted(sigungu_df['sigungu'].unique().tolist())
             selected_sigungu = st.sidebar.selectbox("2. 시/군/구를 선택하세요", sigungu_list)
 
             selected_code = sigungu_df[sigungu_df['sigungu'] == selected_sigungu]['code'].values[0]
