@@ -12,14 +12,12 @@ apply_glassmorphism()
 
 st.title("🍃 스마트 환기 및 야외 운동 알리미")
 
-# [추가] 6. 메인 상단 전국 지도 요약
 with st.expander("🗺️ 전국 주요 지역 기상/대기 요약 보기", expanded=False):
     st.markdown("**전반적인 전국 상태를 간략하게 파악합니다.** (🟢좋음 🟡보통 🔴나쁨)")
     render_national_overview_map()
 
 st.markdown("---")
 
-# [수정] 1. 지역 선택 (도 -> 시/군/구 -> 동 계층형 구성)
 st.sidebar.header("🗺️ 내 지역 선택")
 selected_code = None
 
@@ -35,16 +33,11 @@ try:
             selected_sido = st.sidebar.selectbox("1. 시/도를 선택하세요", sido_list)
 
             # 단계 2: 시/군/구 (선택한 시/도 기준 필터링)
-            sigungu_list = df[df['sido'] == selected_sido]['sigungu'].unique().tolist()
+            sigungu_df = df[df['sido'] == selected_sido]
+            sigungu_list = sigungu_df['sigungu'].unique().tolist()
             selected_sigungu = st.sidebar.selectbox("2. 시/군/구를 선택하세요", sigungu_list)
 
-            # 단계 3: 읍/면/동 (선택한 시/도 & 시/군/구 기준 필터링)
-            eupmyeondong_df = df[(df['sido'] == selected_sido) & (df['sigungu'] == selected_sigungu)]
-            eupmyeondong_list = eupmyeondong_df['eupmyeondong'].tolist()
-            selected_eupmyeondong = st.sidebar.selectbox("3. 읍/면/동을 선택하세요", eupmyeondong_list)
-
-            # 최종 고유 법정동 코드 도출
-            selected_code = eupmyeondong_df[eupmyeondong_df['eupmyeondong'] == selected_eupmyeondong]['code'].values[0]
+            selected_code = sigungu_df[sigungu_df['sigungu'] == selected_sigungu]['code'].values[0]
         else:
             st.sidebar.warning("등록된 지역 데이터가 없습니다.")
 except Exception as e:
@@ -53,9 +46,8 @@ except Exception as e:
 if st.sidebar.button("🔄 현재 지역 날씨 새로고침"):
     st.rerun()
 
-# 메인 대시보드
 if selected_code:
-    with st.spinner(f"[{selected_eupmyeondong}] 공공데이터를 분석 중입니다..."):
+    with st.spinner(f"[{selected_sigungu}] 공공데이터를 분석 중입니다..."):
         try:
             res = requests.get(f"{BACKEND_URL}/api/dashboard/{selected_code}")
             if res.status_code == 200:
@@ -65,7 +57,6 @@ if selected_code:
                     st.warning("⚠️ 현재 공공데이터 API 응답 지연으로, 최근 저장된 이전 데이터를 표시합니다.")
 
                 col1, col2 = st.columns(2)
-                # [수정] 2. 막대바 형식이 들어간 스코어 카드 렌더링
                 with col1:
                     render_score_card("환기 적합도", data['ventilation_score'], "fas fa-wind", "미세먼지, 강수량 기준 산출")
                 with col2:
@@ -84,7 +75,7 @@ if selected_code:
                     render_metric_card("강수 확률", f"{data['rain_prob']}%", "fas fa-cloud-rain")
 
                 st.markdown("---")
-                st.subheader(f"📍 {selected_eupmyeondong} 지역 기반 적합도 지도")
+                st.subheader(f"📍 {selected_sigungu} 기반 지역 적합도 지도")
                 render_map(lat=data['lat'], lon=data['lon'], score=data['outdoor_score'])
 
             else:

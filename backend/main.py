@@ -17,22 +17,41 @@ async def on_startup():
     await init_db()
     async for db in get_db():
         result = await db.execute(select(RegionCode).limit(1))
-        # 지역 선택 테스트를 위한 전국 8도 기반 더미 데이터 삽입
+        # DB가 비어있다면 CSV에서 전국 데이터(시/군/구) 추출 및 저장
         if not result.scalars().first():
-            dummy_regions = [
-                RegionCode(code="1168064000", sido="서울특별시", sigungu="강남구", eupmyeondong="역삼1동", lat=37.495, lon=127.033,
-                           nx=61, ny=125),
-                RegionCode(code="1168065000", sido="서울특별시", sigungu="강남구", eupmyeondong="역삼2동", lat=37.495, lon=127.035,
-                           nx=61, ny=125),
-                RegionCode(code="2635051000", sido="부산광역시", sigungu="해운대구", eupmyeondong="우제1동", lat=35.163,
-                           lon=129.163, nx=98, ny=76),
-                RegionCode(code="4113552000", sido="경기도", sigungu="성남시 분당구", eupmyeondong="서현1동", lat=37.382,
-                           lon=127.118, nx=62, ny=123),
-                RegionCode(code="5011025300", sido="제주특별자치도", sigungu="제주시", eupmyeondong="애월읍", lat=33.462,
-                           lon=126.336, nx=51, ny=38)
-            ]
-            db.add_all(dummy_regions)
-            await db.commit()
+            import pandas as pd
+            import os
+
+            csv_path = "region_data.csv"
+            if os.path.exists(csv_path):
+                try:
+                    df = pd.read_csv(csv_path, encoding="cp949")
+                except UnicodeDecodeError:
+                    df = pd.read_csv(csv_path, encoding="utf-8")
+
+                df = df.fillna("")
+                # 3단계(동)가 비어있고 1단계(시도)가 존재하는 '시/군/구' 단위 데이터 추출
+                target_df = df[(df["3단계"] == "") & (df["1단계"] != "")]
+
+                regions = []
+                for _, row in target_df.iterrows():
+                    code = str(row["행정구역코드"])
+                    sido = row["1단계"]
+                    sigungu = row["2단계"]
+                    if not sigungu: sigungu = sido  # 세종시 등 단일 구조 대응
+
+                    try:
+                        regions.append(RegionCode(
+                            code=code, sido=sido, sigungu=sigungu, eupmyeondong="",
+                            lat=float(row["위도(초/100)"]), lon=float(row["경도(초/100)"]),
+                            nx=int(row["격자 X"]), ny=int(row["격자 Y"])
+                        ))
+                    except ValueError:
+                        continue
+
+                if regions:
+                    db.add_all(regions)
+                    await db.commit()
 
 
 class DashboardResponse(BaseModel):
@@ -52,8 +71,7 @@ class DashboardResponse(BaseModel):
 async def get_regions(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(RegionCode))
     regions = result.scalars().all()
-    # 계층형 구성을 위해 속성별로 분리해서 반환
-    return [{"code": r.code, "sido": r.sido, "sigungu": r.sigungu, "eupmyeondong": r.eupmyeondong} for r in regions]
+    return [{"code": r.code, "sido": r.sido, "sigungu": r.sigungu} for r in regions]
 
 
 @app.get("/api/dashboard/{region_code}", response_model=DashboardResponse)
@@ -64,10 +82,9 @@ async def get_dashboard(region_code: str, db: AsyncSession = Depends(get_db)):
 
     time_threshold = datetime.utcnow() - timedelta(hours=1)
     cache_result = await db.execute(
-        select(WeatherDataCache).where(
-            WeatherDataCache.region_code == region_code,
-            WeatherDataCache.timestamp >= time_threshold
-        ).order_by(WeatherDataCache.timestamp.desc())
+        select(WeatherDataCache).where(WeatherDataCache.region_code == region_code,
+                                       WeatherDataCache.timestamp >= time_threshold).order_by(
+            WeatherDataCache.timestamp.desc())
     )
     cache = cache_result.scalars().first()
 
@@ -80,7 +97,7 @@ async def get_dashboard(region_code: str, db: AsyncSession = Depends(get_db)):
     try:
         station_name = await fetch_nearby_station(region.lat, region.lon)
         air_task = fetch_air_quality(station_name)
-        weather_task = fetch_weather(region.lat, region.lon)
+        weather_task = fetch_weather(region.nx, region.ny)  # 👈 위경도 대신 nx, ny 전달
         uv_task = fetch_uv_index(region_code)
 
         air_data, weather_data, uv_data = await asyncio.gather(air_task, weather_task, uv_task)
@@ -109,4 +126,4 @@ async def get_dashboard(region_code: str, db: AsyncSession = Depends(get_db)):
             return DashboardResponse(is_fallback=True, temperature=fb.temperature, rain_prob=fb.rain_prob, pm10=fb.pm10,
                                      pm25=fb.pm25, uv_index=fb.uv_index, ventilation_score=vent, outdoor_score=out,
                                      lat=region.lat, lon=region.lon)
-        raise HTTPException(status_code=500, detail="API 연동 오류 및 표시할 과거 데이터가 없습니다.")
+        raise HTTPException(status_code=500, detail="API 연동 오류 및 과거 데이터 없음.")
