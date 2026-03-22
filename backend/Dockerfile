@@ -7,7 +7,9 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 # uv 설치
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.cargo/bin:${PATH}"
+
+# 👉 수정된 부분: PATH 경로 변경
+ENV PATH="/root/.local/bin:${PATH}"
 
 # 프로젝트 파일 복사
 COPY pyproject.toml uv.lock ./

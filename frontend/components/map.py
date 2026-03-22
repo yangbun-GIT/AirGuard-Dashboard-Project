@@ -2,32 +2,43 @@ import folium
 from streamlit_folium import st_folium
 
 
-def render_map(lat, lon, station_lat=None, station_lon=None, score=100):
-    # 점수에 따른 마커 색상 결정
-    color = "blue" if score >= 70 else "orange" if score >= 40 else "red"
+def render_map(lat, lon, score=100):
+    color = "green" if score >= 70 else "orange" if score >= 40 else "red"
+    m = folium.Map(location=[lat, lon], zoom_start=13, tiles="CartoDB positron")
 
-    m = folium.Map(location=[lat, lon], zoom_start=14, tiles="CartoDB positron")
-
-    # 사용자 위치 핀
     folium.Marker(
         [lat, lon],
         popup="선택 지역",
         icon=folium.Icon(color=color, icon="info-sign")
     ).add_to(m)
 
-    # 범례 HTML 오버레이
-    legend_html = '''
-     <div style="position: fixed; 
-     bottom: 50px; left: 50px; width: 120px; height: 110px; 
-     border:2px solid grey; z-index:9999; font-size:14px;
-     background-color:rgba(255, 255, 255, 0.8);
-     border-radius: 10px; padding: 10px;">
-     <b>적합도 상태</b><br>
-     <i class="fa fa-map-marker" style="color:blue"></i> 좋음 (70+)<br>
-     <i class="fa fa-map-marker" style="color:orange"></i> 보통 (40+)<br>
-     <i class="fa fa-map-marker" style="color:red"></i> 나쁨 (<40)
-     </div>
-     '''
-    m.get_root().html.add_child(folium.Element(legend_html))
+    # 반응형으로 지도 크기 자동 조절 (짤림 해결)
+    st_folium(m, use_container_width=True, height=400)
 
-    st_folium(m, width=700, height=400)
+
+def render_national_overview_map():
+    # 전국 중심 좌표 (대한민국)
+    m = folium.Map(location=[36.3, 127.5], zoom_start=7, tiles="CartoDB positron")
+
+    # 전국 주요 거점 더미 데이터 (시각적 파악용)
+    points = [
+        {"name": "서울", "lat": 37.5665, "lon": 126.9780, "color": "green"},
+        {"name": "강원", "lat": 37.8228, "lon": 128.1555, "color": "green"},
+        {"name": "대전", "lat": 36.3504, "lon": 127.3845, "color": "orange"},
+        {"name": "대구", "lat": 35.8714, "lon": 128.6014, "color": "orange"},
+        {"name": "부산", "lat": 35.1796, "lon": 129.0756, "color": "red"},
+        {"name": "제주", "lat": 33.4996, "lon": 126.5312, "color": "green"}
+    ]
+
+    for p in points:
+        folium.CircleMarker(
+            location=[p['lat'], p['lon']],
+            radius=12,
+            popup=p['name'],
+            color=p['color'],
+            fill=True,
+            fill_color=p['color'],
+            fill_opacity=0.7
+        ).add_to(m)
+
+    st_folium(m, use_container_width=True, height=350)

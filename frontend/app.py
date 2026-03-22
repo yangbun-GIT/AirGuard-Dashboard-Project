@@ -1,10 +1,10 @@
 import os
 import requests
+import pandas as pd
 import streamlit as st
-from components.ui import apply_glassmorphism, render_metric_card
-from components.map import render_map
+from components.ui import apply_glassmorphism, render_metric_card, render_score_card
+from components.map import render_map, render_national_overview_map
 
-# BE 연결 URL (도커 환경 대응)
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 st.set_page_config(page_title="AirGuard Dashboard", page_icon="🍃", layout="wide")
@@ -12,29 +12,50 @@ apply_glassmorphism()
 
 st.title("🍃 스마트 환기 및 야외 운동 알리미")
 
-# 사이드바: 지역 선택 UI
-st.sidebar.header("🗺️ 지역 선택")
+# [추가] 6. 메인 상단 전국 지도 요약
+with st.expander("🗺️ 전국 주요 지역 기상/대기 요약 보기", expanded=False):
+    st.markdown("**전반적인 전국 상태를 간략하게 파악합니다.** (🟢좋음 🟡보통 🔴나쁨)")
+    render_national_overview_map()
+
+st.markdown("---")
+
+# [수정] 1. 지역 선택 (도 -> 시/군/구 -> 동 계층형 구성)
+st.sidebar.header("🗺️ 내 지역 선택")
+selected_code = None
+
 try:
     res = requests.get(f"{BACKEND_URL}/api/regions")
-    regions_data = res.json()
-    if regions_data:
-        region_options = {r["name"]: r["code"] for r in regions_data}
-        selected_name = st.sidebar.selectbox("행정구역을 선택하세요", list(region_options.keys()))
-        selected_code = region_options[selected_name]
-    else:
-        st.sidebar.warning("등록된 지역 데이터가 없습니다.")
-        selected_code = None
+    if res.status_code == 200:
+        regions_data = res.json()
+        if regions_data:
+            df = pd.DataFrame(regions_data)
+
+            # 단계 1: 시/도
+            sido_list = df['sido'].unique().tolist()
+            selected_sido = st.sidebar.selectbox("1. 시/도를 선택하세요", sido_list)
+
+            # 단계 2: 시/군/구 (선택한 시/도 기준 필터링)
+            sigungu_list = df[df['sido'] == selected_sido]['sigungu'].unique().tolist()
+            selected_sigungu = st.sidebar.selectbox("2. 시/군/구를 선택하세요", sigungu_list)
+
+            # 단계 3: 읍/면/동 (선택한 시/도 & 시/군/구 기준 필터링)
+            eupmyeondong_df = df[(df['sido'] == selected_sido) & (df['sigungu'] == selected_sigungu)]
+            eupmyeondong_list = eupmyeondong_df['eupmyeondong'].tolist()
+            selected_eupmyeondong = st.sidebar.selectbox("3. 읍/면/동을 선택하세요", eupmyeondong_list)
+
+            # 최종 고유 법정동 코드 도출
+            selected_code = eupmyeondong_df[eupmyeondong_df['eupmyeondong'] == selected_eupmyeondong]['code'].values[0]
+        else:
+            st.sidebar.warning("등록된 지역 데이터가 없습니다.")
 except Exception as e:
     st.sidebar.error("백엔드 서버와 연결할 수 없습니다.")
-    selected_code = None
 
-# 새로고침 버튼
-if st.sidebar.button("🔄 데이터 새로고침"):
+if st.sidebar.button("🔄 현재 지역 날씨 새로고침"):
     st.rerun()
 
 # 메인 대시보드
 if selected_code:
-    with st.spinner("공공데이터를 분석 중입니다..."):
+    with st.spinner(f"[{selected_eupmyeondong}] 공공데이터를 분석 중입니다..."):
         try:
             res = requests.get(f"{BACKEND_URL}/api/dashboard/{selected_code}")
             if res.status_code == 200:
@@ -44,11 +65,11 @@ if selected_code:
                     st.warning("⚠️ 현재 공공데이터 API 응답 지연으로, 최근 저장된 이전 데이터를 표시합니다.")
 
                 col1, col2 = st.columns(2)
+                # [수정] 2. 막대바 형식이 들어간 스코어 카드 렌더링
                 with col1:
-                    render_metric_card("환기 적합도", f"{data['ventilation_score']}점", "fas fa-wind", "미세먼지, 강수량 기준 산출")
+                    render_score_card("환기 적합도", data['ventilation_score'], "fas fa-wind", "미세먼지, 강수량 기준 산출")
                 with col2:
-                    render_metric_card("야외 활동 적합도", f"{data['outdoor_score']}점", "fas fa-running",
-                                       "기온, 자외선, 미세먼지 기준 산출")
+                    render_score_card("야외 활동 적합도", data['outdoor_score'], "fas fa-running", "기온, 자외선, 미세먼지 기준 산출")
 
                 st.markdown("---")
                 st.subheader("📊 상세 관측 데이터")
@@ -63,12 +84,12 @@ if selected_code:
                     render_metric_card("강수 확률", f"{data['rain_prob']}%", "fas fa-cloud-rain")
 
                 st.markdown("---")
-                st.subheader("📍 지역 기반 적합도 지도")
+                st.subheader(f"📍 {selected_eupmyeondong} 지역 기반 적합도 지도")
                 render_map(lat=data['lat'], lon=data['lon'], score=data['outdoor_score'])
 
             else:
                 st.error("데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.")
         except Exception as e:
-            st.error(f"대시보드 로딩 중 오류가 발생했습니다: {str(e)}")
+            st.error(f"대시보드 로딩 중 오류가 발생했습니다.")
 else:
     st.info("👈 좌측 사이드바에서 지역을 선택하여 분석을 시작하세요.")
