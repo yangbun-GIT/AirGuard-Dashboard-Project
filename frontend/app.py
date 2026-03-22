@@ -51,12 +51,22 @@ try:
 
             selected_sido = st.sidebar.selectbox("1. 시/도를 선택하세요", sorted_sido_list)
 
-            # 단계 2: 시/군/구 (선택한 시/도 기준 필터링)
+            # 단계 2: 시/군/구 필터링
             sigungu_df = df[df['sido'] == selected_sido]
-            # 시군구 가나다 정렬
-            sigungu_list = sorted(sigungu_df['sigungu'].unique().tolist())
-            selected_sigungu = st.sidebar.selectbox("2. 시/군/구를 선택하세요", sigungu_list)
 
+            # 🚨 수정 포인트: 시/군/구 리스트에서 시/도 명칭과 똑같은 항목(대표행) 제거
+            # 예: '경기도' 선택 시 리스트에 있는 '경기도' 항목 제거 -> '수원시', '용인시' 등만 남음
+            all_sigungu = sigungu_df['sigungu'].unique().tolist()
+            filtered_sigungu = [sg for sg in all_sigungu if sg != selected_sido]
+
+            # 만약 필터링 후 리스트가 비어있다면 (세종시처럼 단일 구조인 경우) 시도명을 그대로 사용
+            if not filtered_sigungu:
+                filtered_sigungu = [selected_sido]
+
+            sorted_sigungu_list = sorted(filtered_sigungu)
+            selected_sigungu = st.sidebar.selectbox("2. 시/군/구를 선택하세요", sorted_sigungu_list)
+
+            # 선택된 시군구에 해당하는 코드 추출
             selected_code = sigungu_df[sigungu_df['sigungu'] == selected_sigungu]['code'].values[0]
         else:
             st.sidebar.warning("등록된 지역 데이터가 없습니다.")

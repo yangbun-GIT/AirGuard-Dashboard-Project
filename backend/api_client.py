@@ -36,51 +36,54 @@ async def fetch_air_quality(station_name: str) -> dict:
         if data.get("response", {}).get("header", {}).get("resultCode") == "00":
             items = data["response"]["body"]["items"]
             if items:
-                return {"pm10": float(items[0].get("pm10Value", 0) or 0),
-                        "pm25": float(items[0].get("pm25Value", 0) or 0)}
+                # 관측소 점검 등으로 데이터가 "-"로 올 때의 에러를 방지합니다.
+                pm10_val = items[0].get("pm10Value")
+                pm25_val = items[0].get("pm25Value")
+                pm10 = float(pm10_val) if pm10_val and pm10_val != "-" else 0.0
+                pm25 = float(pm25_val) if pm25_val and pm25_val != "-" else 0.0
+                return {"pm10": pm10, "pm25": pm25}
         return {"pm10": 0.0, "pm25": 0.0}
 
 
 async def fetch_weather(nx: int, ny: int) -> dict:
-    url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
+    # 🚨 단기예보(getVilageFcst) -> 초단기실황(getUltraSrtNcst)으로 변경!
+    url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst"
     now = datetime.now()
 
-    # 기상청 단기예보 기준시간 알고리즘 (02, 05, 08, 11, 14, 17, 20, 23시)
-    base_times = [2, 5, 8, 11, 14, 17, 20, 23]
-    target_hour = -1
-    for bt in reversed(base_times):
-        # 발표 후 15분 뒤부터 조회 안전권
-        if now.hour > bt or (now.hour == bt and now.minute >= 15):
-            target_hour = bt
-            break
-
-    if target_hour == -1:  # 자정~02시 사이면 전날 23시 데이터 사용
-        now = now - timedelta(days=1)
-        target_hour = 23
+    # 초단기실황은 매시간 40분에 발표됩니다. (예: 10시 40분에 10시 실황 발표)
+    if now.minute < 40:
+        now = now - timedelta(hours=1)
 
     base_date = now.strftime("%Y%m%d")
-    base_time = f"{target_hour:02d}00"
+    base_time = now.strftime("%H00")
 
-    params = {"serviceKey": SERVICE_KEY, "dataType": "JSON", "numOfRows": 100, "pageNo": 1, "base_date": base_date,
+    params = {"serviceKey": SERVICE_KEY, "dataType": "JSON", "numOfRows": 20, "pageNo": 1, "base_date": base_date,
               "base_time": base_time, "nx": nx, "ny": ny}
 
     async with httpx.AsyncClient() as client:
         response = await client.get(url, params=params, timeout=10.0)
         data = response.json()
+
         result = {"temperature": 0.0, "rain_prob": 0.0}
 
         if data.get("response", {}).get("header", {}).get("resultCode") == "00":
             items = data["response"]["body"]["items"]["item"]
             for item in items:
-                if item["category"] == "TMP": result["temperature"] = float(item["fcstValue"])
-                if item["category"] == "POP": result["rain_prob"] = float(item["fcstValue"])
+                # T1H: 현재 실황 기온
+                if item["category"] == "T1H":
+                    result["temperature"] = float(item["obsrValue"])
+                # PTY: 현재 강수 형태 (0:없음, 1:비, 2:비/눈, 3:눈, 4:소나기)
+                if item["category"] == "PTY":
+                    pty_val = int(item["obsrValue"])
+                    # 현재 비나 눈이 오고 있다면 강수확률을 100%로 취급하여 환기/야외활동 점수 대폭 차감
+                    result["rain_prob"] = 100.0 if pty_val > 0 else 0.0
         return result
 
 
 async def fetch_uv_index(code: str) -> float:
     url = "http://apis.data.go.kr/1360000/LivingWthrIdxServiceV4/getUVIdxV4"
     now = datetime.now()
-    area_no = str(code)[:10]  # 행정구역코드
+    area_no = str(code)[:10]
     params = {"ServiceKey": SERVICE_KEY, "dataType": "JSON", "areaNo": area_no, "time": now.strftime("%Y%m%d%H")}
 
     async with httpx.AsyncClient() as client:
@@ -91,4 +94,4 @@ async def fetch_uv_index(code: str) -> float:
                 return float(data["response"]["body"]["items"]["item"][0]["h0"])
         except:
             pass
-    return 3.0
+    return 3.0  # 에러 시 기본값

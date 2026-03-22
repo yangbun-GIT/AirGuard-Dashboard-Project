@@ -49,11 +49,16 @@ async def on_startup():
                     code = str(row["행정구역코드"]).strip()
                     sido = str(row["1단계"]).strip()
                     sigungu = str(row["2단계"]).strip()
-                    if not sigungu: sigungu = sido
+
+                    # 🚨 수정 포인트:
+                    # 2단계(시군구)가 비어있는 행은 해당 '도' 전체의 대표 좌표입니다.
+                    # 이를 위해 sigungu가 비어있으면 '전체' 또는 시도명과 동일하게 처리하되,
+                    # 프론트엔드에서 필터링하기 쉽도록 구조를 잡습니다.
+                    display_sigungu = sigungu if sigungu else sido
 
                     try:
                         regions.append(RegionCode(
-                            code=code, sido=sido, sigungu=sigungu, eupmyeondong="",
+                            code=code, sido=sido, sigungu=display_sigungu, eupmyeondong="",
                             lat=float(row["위도(초/100)"]), lon=float(row["경도(초/100)"]),
                             nx=int(row["격자 X"]), ny=int(row["격자 Y"])
                         ))
